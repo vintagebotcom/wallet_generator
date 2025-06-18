@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ethereum Wallet Generator</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.7.0/dist/ethers.umd.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f0f2f5; padding: 20px; }
+    .container { max-width: 800px; margin: auto; background: white; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); padding: 20px; }
+    button { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+    button:hover { background: #0056b3; }
+    textarea { width: 100%; font-family: monospace; font-size: 14px; margin-top: 5px; padding: 10px; border-radius: 6px; }
+    .copy-btn { margin-left: 10px; background: #28a745; }
+    .export-btn { background: #ff9800; margin-right: 10px; margin-top: 0; }
+    .field { margin-bottom: 10px; }
+    .wallet-block { background: #f9f9f9; border: 1px solid #ccc; border-radius: 8px; padding: 15px; margin-top: 20px; }
+    label { font-weight: bold; display: block; margin-top: 10px; }
+    .export-row { margin: 16px 0 0 0; display: flex; gap: 10px; flex-wrap: wrap; }
+    .action-row { display: flex; gap: 10px; margin-bottom: 16px; }
+    .modal-bg { display: none; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.3); z-index: 9999; align-items: center; justify-content: center; }
+    .modal {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 0 10px #0002;
+      padding: 24px;
+      max-width: 500px;
+      width: 95%;
+      position: relative;
+      max-height: 90vh;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .close-modal { position: absolute; right: 18px; top: 12px; background: none; border: none; font-size: 22px; color: #888; cursor: pointer; }
+    .arrange-result {
+      margin-top: 14px;
+      background: #f6f6f6;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 14px;
+      min-height: 60px;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow: auto;
+      cursor: pointer;
+    }
+    .arrange-copy-btn { background: #28a745; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>🔐 Ethereum Wallet Generator</h2>
+    <div class="action-row">
+      <button id="generateBtn">Generate Wallet(s)</button>
+      <button id="arrangeBtn">Arrange Wallet Keys</button>
+    </div>
+    <label for="walletCount">Number of Wallets to Generate:</label>
+    <input type="number" id="walletCount" min="1" value="1" style="width: 80px; padding: 6px; font-size: 16px;" />
+    <div class="export-row" id="exportRow" style="display:none;">
+      <button class="export-btn" id="exportAllBtn">Export ALL (Address, Private Key, Mnemonic)</button>
+      <button class="export-btn" id="exportAddrPrivBtn">Export Address & Private Key</button>
+      <button class="export-btn" id="exportPrivBtn">Export Private Keys Only</button>
+    </div>
+    <div id="walletList"></div>
+  </div>
+
+  <!-- Modal for Arrange Wallet Keys -->
+  <div class="modal-bg" id="arrangeModalBg">
+    <div class="modal">
+      <button class="close-modal" id="closeArrangeModal">&times;</button>
+      <h3>Arrange Wallet Keys</h3>
+      <label for="arrangeFormat">Format (use <b>pvt</b> as placeholder):</label>
+      <textarea id="arrangeFormat" rows="3" placeholder='e.g. "name": "Wallet-1",&#10;"privatekey": "pvt",&#10;"token": ""' style="width:100%;padding:8px;font-size:15px;margin-bottom:8px;white-space:pre;"></textarea>
+      <label for="arrangeKeys">Paste Private Keys (one per line):</label>
+      <textarea id="arrangeKeys" rows="7" placeholder="Paste private keys, one per line"></textarea>
+      <button id="arrangeDoBtn" style="margin-top: 10px;">Arrange</button>
+      <div>
+        <label style="margin-top:15px;">Arranged Keys:</label>
+        <div class="arrange-result" id="arrangeResult" tabindex="0"></div>
+        <button class="arrange-copy-btn" id="arrangeCopyBtn" style="display:none;">Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let generatedWallets = [];
+
+    document.getElementById("generateBtn").addEventListener("click", generateWallets);
+    document.getElementById("exportAllBtn").addEventListener("click", function() {
+      exportWallets("all");
+    });
+    document.getElementById("exportAddrPrivBtn").addEventListener("click", function() {
+      exportWallets("addrpriv");
+    });
+    document.getElementById("exportPrivBtn").addEventListener("click", function() {
+      exportWallets("priv");
+    });
+
+    // Arrange Wallet Keys functionality
+    document.getElementById("arrangeBtn").addEventListener("click", function() {
+      document.getElementById("arrangeModalBg").style.display = "flex";
+      document.getElementById("arrangeFormat").value = "";
+      document.getElementById("arrangeKeys").value = "";
+      document.getElementById("arrangeResult").textContent = "";
+      document.getElementById("arrangeCopyBtn").style.display = "none";
+    });
+    document.getElementById("closeArrangeModal").addEventListener("click", function() {
+      document.getElementById("arrangeModalBg").style.display = "none";
+    });
+
+    document.getElementById("arrangeDoBtn").addEventListener("click", function() {
+      const format = document.getElementById("arrangeFormat").value;
+      let keys = document.getElementById("arrangeKeys").value.split('\n').map(k => k.trim()).filter(k => k);
+      if (!format || keys.length === 0) {
+        document.getElementById("arrangeResult").textContent = "Please enter a format and at least one private key.";
+        document.getElementById("arrangeCopyBtn").style.display = "none";
+        return;
+      }
+      // Find the number in the format (e.g. Wallet-1)
+      let numMatch = format.match(/(\d+)(?=\D*=?\s*$)/);
+      let startNum = numMatch ? parseInt(numMatch[1]) : 1;
+      let output = "";
+      for (let i = 0; i < keys.length; i++) {
+        let currentNum = startNum + i;
+        let line = format.replace(/(\d+)(?=\D*=?\s*$)/, currentNum);
+        line = line.replace(/pvt/g, keys[i]);
+        output += line + "\n";
+      }
+      document.getElementById("arrangeResult").textContent = output;
+      document.getElementById("arrangeCopyBtn").style.display = "inline-block";
+    });
+
+    document.getElementById("arrangeCopyBtn").addEventListener("click", function() {
+      const result = document.getElementById("arrangeResult").textContent;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(result).then(() => {
+          alert("Copied to clipboard!");
+        });
+      }
+    });
+
+    document.getElementById("arrangeResult").addEventListener("click", function() {
+      const text = this.textContent;
+      if (!text) return;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => {
+          this.style.borderColor = '#28a745';
+          setTimeout(() => { this.style.borderColor = ''; }, 500);
+        });
+      }
+      const range = document.createRange();
+      range.selectNodeContents(this);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      this.scrollTop = this.scrollHeight;
+    });
+
+    async function generateWallets() {
+      const count = parseInt(document.getElementById("walletCount").value);
+      if (isNaN(count) || count < 1) {
+        alert("Please enter a valid number of wallets to generate.");
+        return;
+      }
+      const container = document.getElementById("walletList");
+      container.innerHTML = "";
+      generatedWallets = [];
+      for (let i = 0; i < count; i++) {
+        const wallet = ethers.Wallet.createRandom();
+        generatedWallets.push({
+          address: wallet.address,
+          privateKey: wallet.privateKey,
+          mnemonic: wallet.mnemonic.phrase
+        });
+        const block = document.createElement("div");
+        block.className = "wallet-block";
+        block.innerHTML = `
+          <h3>Wallet #${i + 1}</h3>
+          <div class="field">
+            <strong>Address:</strong>
+            <button class="copy-btn" onclick="copyText('address-${i}')">Copy</button>
+            <textarea id="address-${i}" class="autocopy" readonly>${wallet.address}</textarea>
+          </div>
+          <div class="field">
+            <strong>Private Key:</strong>
+            <button class="copy-btn" onclick="copyText('private-${i}')">Copy</button>
+            <textarea id="private-${i}" class="autocopy" readonly>${wallet.privateKey}</textarea>
+          </div>
+          <div class="field">
+            <strong>Mnemonic:</strong>
+            <button class="copy-btn" onclick="copyText('mnemonic-${i}')">Copy</button>
+            <textarea id="mnemonic-${i}" class="autocopy" readonly>${wallet.mnemonic.phrase}</textarea>
+          </div>
+        `;
+        container.appendChild(block);
+      }
+      document.getElementById("exportRow").style.display = generatedWallets.length > 0 ? "flex" : "none";
+      addAutocopyListeners();
+    }
+
+    function copyText(id) {
+      const el = document.getElementById(id);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(el.value).then(() => {
+          alert("Copied to clipboard!");
+        });
+      } else {
+        el.select();
+        el.setSelectionRange(0, 99999);
+        document.execCommand("copy");
+        alert("Copied to clipboard!");
+      }
+    }
+
+    function addAutocopyListeners() {
+      const all = document.querySelectorAll('.autocopy');
+      all.forEach(el => {
+        el.addEventListener('click', function() {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(this.value).then(() => {
+              this.style.borderColor = '#28a745';
+              setTimeout(() => { this.style.borderColor = ''; }, 500);
+            });
+          } else {
+            this.select();
+            this.setSelectionRange(0, 99999);
+            document.execCommand("copy");
+            this.style.borderColor = '#28a745';
+            setTimeout(() => { this.style.borderColor = ''; }, 500);
+          }
+        });
+      });
+    }
+
+    function exportWallets(type) {
+      if (!generatedWallets.length) {
+        alert("No wallets to export!");
+        return;
+      }
+      let txtContent = "";
+      let filename = "";
+      if (type === "all") {
+        filename = "wallets_all.txt";
+        generatedWallets.forEach((w, i) => {
+          txtContent += `Wallet #${i + 1}\n`;
+          txtContent += `Address: ${w.address}\n`;
+          txtContent += `Private Key: ${w.privateKey}\n`;
+          txtContent += `Mnemonic: ${w.mnemonic}\n`;
+          txtContent += `\n-----------------------------\n\n`;
+        });
+      } else if (type === "addrpriv") {
+        filename = "wallets_address_privatekey.txt";
+        generatedWallets.forEach((w, i) => {
+          txtContent += `Wallet #${i + 1}\n`;
+          txtContent += `Address: ${w.address}\n`;
+          txtContent += `Private Key: ${w.privateKey}\n`;
+          txtContent += `\n-----------------------------\n\n`;
+        });
+      } else if (type === "priv") {
+        filename = "wallets_privatekeys.txt";
+        generatedWallets.forEach(w => {
+          txtContent += w.privateKey + "\n";
+        });
+      }
+      const blob = new Blob([txtContent.trim()], { type: "text/plain;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+    window.copyText = copyText;
+  </script>
+</body>
+</html>
