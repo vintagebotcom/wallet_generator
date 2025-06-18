@@ -4,5 +4,4 @@
 
 ## FORMAT OF ARANGE 
 
-#wallet_key_8=pvt
-# ( "PVT" IS WHAT REPLACES YOUR PVT KEY WITH 
+# wallet_key_8=pvt ( "PVT" IS WHAT REPLACES YOUR PVT KEY WITH 
